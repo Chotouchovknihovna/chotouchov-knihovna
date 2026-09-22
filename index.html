@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Knihovnička Chotouchov</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f6f9;
+            color: #333;
+            margin: 0;
+            padding: 20px;
+            /* Zákaz označování textu pro větší ochranu */
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            text-align: center;
+            color: #2c3e50;
+            font-size: 1.5rem;
+        }
+        p.subtitle {
+            text-align: center;
+            color: #7f8c8d;
+            font-size: 0.9rem;
+            margin-bottom: 20px;
+        }
+        .admin-banner {
+            background: #fef3c7;
+            border: 1px solid #f59e0b;
+            color: #92400e;
+            padding: 10px;
+            border-radius: 6px;
+            text-align: center;
+            margin-bottom: 15px;
+            font-weight: bold;
+            display: none;
+        }
+        .book-card {
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: #fff;
+        }
+        .book-info h3 {
+            margin: 0 0 5px 0;
+            font-size: 1.1rem;
+        }
+        .book-info p {
+            margin: 0;
+            color: #64748b;
+            font-size: 0.85rem;
+        }
+        .borrower-info {
+            color: #d97706;
+            font-weight: bold;
+            font-size: 0.85rem;
+            margin-top: 4px;
+            display: none;
+        }
+        .status {
+            font-weight: bold;
+            font-size: 0.8rem;
+            padding: 4px 8px;
+            border-radius: 4px;
+            margin-top: 5px;
+            display: inline-block;
+        }
+        .status.dostupna {
+            background: #dcfce7;
+            color: #166534;
+        }
+        .status.pujceno {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+        button {
+            padding: 8px 12px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 0.85rem;
+        }
+        .btn-borrow {
+            background: #2563eb;
+            color: white;
+        }
+        .btn-return {
+            background: #16a34a;
+            color: white;
+        }
+        .add-section {
+            margin-top: 25px;
+            border-top: 2px dashed #e2e8f0;
+            padding-top: 15px;
+        }
+        .add-section h3 {
+            font-size: 1.1rem;
+            margin-bottom: 10px;
+        }
+        input {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 8px;
+            border: 1px solid #cbd5e1;
+            border-radius: 6px;
+            box-sizing: border-box;
+            user-select: text; /* Aby šlo psát do políček */
+            -webkit-user-select: text;
+        }
+        .btn-add {
+            width: 100%;
+            background: #475569;
+            color: white;
+            padding: 10px;
+        }
+        #loading {
+            text-align: center;
+            color: #64748b;
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>📚 Chotouchovská knihovnička</h1>
+    <p class="subtitle">Vezmi si knihu, přečti a vrať zase zpět na zastávku.</p>
+
+    <div id="admin-banner" class="admin-banner">🔓 Správcovský režim aktivní (zobrazují se jména)</div>
+
+    <div id="loading">Načítám knihy z cloudu...</div>
+    <div id="book-list"></div>
+
+    <div class="add-section">
+        <h3>Přidat novou knihu do budky</h3>
+        <input type="text" id="new-title" placeholder="Název knihy">
+        <input type="text" id="new-author" placeholder="Autor">
+        <button class="btn-add" onclick="addNewBook()">Přidat knihu</button>
+    </div>
+</div>
+
+<script type="module">
+    // Blokování F12, Ctrl+Shift+I, Ctrl+U a pravého tlačítka
+    document.addEventListener('contextmenu', event => event.preventDefault());
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'F12' || 
+            (e.ctrlKey && e.shiftKey && (e.key === 'I' || e.key === 'i' || e.key === 'C' || e.key === 'c')) || 
+            (e.ctrlKey && (e.key === 'U' || e.key === 'u'))) {
+            e.preventDefault();
+            return false;
+        }
+    });
+
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+    import { getFirestore, collection, addDoc, updateDoc, doc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+    const firebaseConfig = {
+        apiKey: "AIzaSyCLLYcp97Fmb4_pQ83gXULPKTqeGTe7GEs",
+        authDomain: "chotouchov-knihovna.firebaseapp.com",
+        projectId: "chotouchov-knihovna",
+        storageBucket: "chotouchov-knihovna.firebasestorage.app",
+        messagingSenderId: "291041275912",
+        appId: "1:291041275912:web:60896aaf9a383549b761bd"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    const listDiv = document.getElementById('book-list');
+    const loadingDiv = document.getElementById('loading');
+    const adminBanner = document.getElementById('admin-banner');
+
+    let isAdmin = false;
+    let zeroCounter = "";
+
+    // Tajný vstup pro správce přes 10x nulu
+    window.addEventListener('keydown', (e) => {
+        if (e.key === '0') {
+            zeroCounter += '0';
+            if (zeroCounter.length >= 10) {
+                isAdmin = !isAdmin;
+                adminBanner.style.display = isAdmin ? 'block' : 'none';
+                zeroCounter = '';
+                renderBooksCache(lastSnapshotData);
+                alert(isAdmin ? "Správcovský režim zapnut!" : "Správcovský režim vypnut!");
+            }
+        } else {
+            zeroCounter = '';
+        }
+    });
+
+    let lastSnapshotData = null;
+
+    onSnapshot(collection(db, "books"), (snapshot) => {
+        lastSnapshotData = snapshot;
+        renderBooksCache(snapshot);
+    });
+
+    function renderBooksCache(snapshot) {
+        if (!snapshot) return;
+        loadingDiv.style.display = 'none';
+        listDiv.innerHTML = '';
+
+        if (snapshot.empty) {
+            listDiv.innerHTML = '<p style="text-align:center;">V budce zatím nejsou žádné knihy. Přidej první!</p>';
+            return;
+        }
+
+        snapshot.forEach((docSnap) => {
+            const book = docSnap.data();
+            const id = docSnap.id;
+
+            const card = document.createElement('div');
+            card.className = 'book-card';
+
+            const statusClass = book.status === 'dostupna' ? 'dostupna' : 'pujceno';
+            const statusText = book.status === 'dostupna' ? '🟢 Dostupná v budce' : '🔴 Právě vypůjčeno';
+            
+            let borrowerHtml = '';
+            if (book.status === 'pujceno' && book.borrower && isAdmin) {
+                borrowerHtml = `<div class="borrower-info" style="display:block;">👤 Půjčil si: ${escapeHtml(book.borrower)}</div>`;
+            }
+
+            const actionBtn = book.status === 'dostupna' 
+                ? `<button class="btn-borrow" onclick="borrowBook('${id}')">Půjčit si</button>`
+                : `<button class="btn-return" onclick="returnBook('${id}')">Vrátit zpět</button>`;
+
+            card.innerHTML = `
+                <div class="book-info">
+                    <h3>${escapeHtml(book.title)}</h3>
+                    <p>Autor: ${escapeHtml(book.author)}</p>
+                    <span class="status ${statusClass}">${statusText}</span>
+                    ${borrowerHtml}
+                </div>
+                <div>${actionBtn}</div>
+            `;
+            listDiv.appendChild(card);
+        });
+    }
+
+    window.borrowBook = async function(id) {
+        const borrower = prompt("Napiš své jméno nebo přezdívku (nepovinné, můžeš nechat prázdné):");
+        const bookRef = doc(db, "books", id);
+        try {
+            await updateDoc(bookRef, { 
+                status: 'pujceno',
+                borrower: borrower ? borrower.trim() : 'Neznámý čtenář'
+            });
+        } catch (error) {
+            alert("Chyba: " + error.message);
+        }
+    };
+
+    window.returnBook = async function(id) {
+        const bookRef = doc(db, "books", id);
+        try {
+            await updateDoc(bookRef, { 
+                status: 'dostupna',
+                borrower: ""
+            });
+        } catch (error) {
+            alert("Chyba: " + error.message);
+        }
+    };
+
+    window.addNewBook = async function() {
+        const titleInput = document.getElementById('new-title');
+        const authorInput = document.getElementById('new-author');
+
+        if (titleInput.value.trim() === '' || authorInput.value.trim() === '') {
+            alert('Vyplň prosím název i autora knihy!');
+            return;
+        }
+
+        try {
+            await addDoc(collection(db, "books"), {
+                title: titleInput.value.trim(),
+                author: authorInput.value.trim(),
+                status: 'dostupna',
+                borrower: ""
+            });
+            titleInput.value = '';
+            authorInput.value = '';
+        } catch (error) {
+            alert("Chyba při přidávání knihy: " + error.message);
+        }
+    };
+
+    function escapeHtml(str) {
+        if (!str) return '';
+        return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+</script>
+
+</body>
+</html>
