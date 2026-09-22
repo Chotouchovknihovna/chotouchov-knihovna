@@ -71,6 +71,10 @@
             align-items: center;
             background: #fff;
         }
+        .book-card.highlight {
+            border: 2px solid #2563eb;
+            background: #f0fdf4;
+        }
         .book-info h3 {
             margin: 0 0 5px 0;
             font-size: 1.1rem;
@@ -129,7 +133,7 @@
         .add-section {
             margin-top: 25px;
             border-top: 2px dashed #e2e8f0;
-            padding-top: 15px;
+            padding-top: 15px; uživatelsky
         }
         .add-section h3 {
             font-size: 1.1rem;
@@ -167,10 +171,10 @@
 
     <div id="admin-banner" class="admin-banner">🔓 Správcovský režim aktivní (zobrazují se jména)</div>
 
-    <!-- Sekce pro skener čárových kódů -->
+    <!-- Sekce pro univerzální skener -->
     <div class="scanner-section">
-        <h3>📷 Skenovat čárový kód (ISBN) knihy</h3>
-        <button class="btn-scan" onclick="startScanner()">Zapnout skener čárového kódu</button>
+        <h3>📷 Skener čárového kódu / ISBN</h3>
+        <button class="btn-scan" onclick="startScanner()">Zapnout skener</button>
         <div id="reader"></div>
         <div id="scan-status"></div>
     </div>
@@ -199,7 +203,7 @@
     });
 
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-    import { getFirestore, collection, addDoc, updateDoc, doc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+    import { getFirestore, collection, addDoc, updateDoc, doc, onSnapshot, getDocs, query, where } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
     const firebaseConfig = {
         apiKey: "AIzaSyCLLYcp97Fmb4_pQ83gXULPKTqeGTe7GEs",
@@ -259,6 +263,8 @@
 
             const card = document.createElement('div');
             card.className = 'book-card';
+            card.setAttribute('data-isbn', book.isbn || '');
+            card.setAttribute('data-id', id);
 
             const statusClass = book.status === 'dostupna' ? 'dostupna' : 'pujceno';
             const statusText = book.status === 'dostupna' ? '🟢 Dostupná v budce' : '🔴 Právě vypůjčeno';
@@ -295,7 +301,6 @@
             html5QrCode = new Html5Qrcode("reader");
         }
 
-        // Konfigurace pro čtení EAN čárových kódů a QR kódů
         const config = {
             fps: 10,
             qrbox: { width: 300, height: 120 },
@@ -313,34 +318,70 @@
             async (decodedText) => {
                 html5QrCode.stop();
                 readerDiv.style.display = 'none';
-                scanStatus.innerText = "Nalezen kód: " + decodedText + ". Hledám knihu...";
+                scanStatus.innerText = "Naskenován kód: " + decodedText + ". Zpracovávám...";
 
                 try {
-                    const response = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${decodedText}`);
-                    const data = await response.json();
+                    // 1. Zjistíme, jestli kniha s tímto ISBN už existuje v naší databázi v budce
+                    const q = query(collection(db, "books"), where("isbn", "==", decodedText));
+                    const querySnapshot = await getDocs(q);
 
-                    if (data.items && data.items.length > 0) {
-                        const bookInfo = data.items[0].volumeInfo;
-                        const title = bookInfo.title || "Neznámý název";
-                        const author = bookInfo.authors ? bookInfo.authors.join(', ') : "Neznámý autor";
+                    if (!querySnapshot.empty) {
+                        // Kniha už v budce JE -> najdeme ji a nabídneme půjčení nebo vrácení
+                        const docSnap = querySnapshot.docs[0];
+                        const bookData = docSnap.data();
+                        const bookId = docSnap.id;
 
-                        await addDoc(collection(db, "books"), {
-                            title: title,
-                            author: author,
-                            status: 'dostupna',
-                            borrower: ""
-                        });
+                        scanStatus.innerText = `📖 Kniha „${bookData.title}“ už je v budce!`;
+                        
+                        // Zvýrazníme knihu v seznamu
+                        const card = document.querySelector(`[data-id="${bookId}"]`);
+                        if (card) {
+                            card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            card.classList.add('highlight');
+                            setTimeout(() => card.classList.remove('highlight'), 4000);
+                        }
 
-                        scanStatus.innerText = `✅ Kniha „${title}“ (${author}) byla přidána do budky!`;
+                        // Pokud je dostupná, rovnou nabídneme půjčení, nebo vrácení
+                        if (bookData.status === 'dostupna') {
+                            if (confirm(`Chceš si půjčit knihu: ${bookData.title}?`)) {
+                                borrowBook(bookId);
+                            }
+                        } else {
+                            if (confirm(`Chceš vrátit do budky knihu: ${bookData.title}?`)) {
+                                returnBook(bookId);
+                            }
+                        }
+
                     } else {
-                        scanStatus.innerText = "❌ Čárový kód nebyl rozpoznán jako kniha (ISBN). Zkus zadat ručně.";
+                        // Kniha v budce NEJE -> stáhneme ji z internetu a přidáme jako novou
+                        scanStatus.innerText = "Nová kniha, stahuji informace z internetu...";
+                        const response = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${decodedText}`);
+                        const data = await response.json();
+
+                        if (data.items && data.items.length > 0) {
+                            const bookInfo = data.items[0].volumeInfo;
+                            const title = bookInfo.title || "Neznámý název";
+                            const author = bookInfo.authors ? bookInfo.authors.join(', ') : "Neznámý autor";
+
+                            await addDoc(collection(db, "books"), {
+                                title: title,
+                                author: author,
+                                status: 'dostupna',
+                                borrower: "",
+                                isbn: decodedText
+                            });
+
+                            scanStatus.innerText = `✅ Nová kniha „${title}“ byla úspěšně přidána do budky!`;
+                        } else {
+                            scanStatus.innerText = "❌ Kniha nebyla nalezena v databázi Google Books. Můžeš ji přidat dole ručně.";
+                        }
                     }
                 } catch (error) {
-                    scanStatus.innerText = "Chyba při načítání knihy: " + error.message;
+                    scanStatus.innerText = "Chyba při zpracování kódu: " + error.message;
                 }
             },
             (errorMessage) => {
-                // Průběžné hledání v záběru
+                // Průběžné hledání
             }
         ).catch((err) => {
             scanStatus.innerText = "Nepodařilo se zapnout kameru: " + err;
@@ -386,12 +427,13 @@
                 title: titleInput.value.trim(),
                 author: authorInput.value.trim(),
                 status: 'dostupna',
-                borrower: ""
+                borrower: "",
+                isbn: ""
             });
             titleInput.value = '';
             authorInput.value = '';
         } catch (error) {
-            alert("Chyba: " + error.message);
+            alert("Chyba při přidávání knihy: " + error.message);
         }
     };
 
